@@ -1298,12 +1298,13 @@ function scheduleCloudSave(){
                 headers:{'Content-Type':'application/json','X-Pin':getCloudPin()},
                 body:JSON.stringify(backup)
             });
+            _origSetItem('qf_last_sync',String(new Date(backup.exportedAt).getTime()));
             console.log('Cloud sync saved');
         }catch(e){console.warn('Cloud save failed:',e);}
     },2000);
 }
 
-async function loadFromCloud(){
+async function loadFromCloud(force){
     try{
         const res=await fetch(CLOUD_URL+'/kv/quotefiller',{
             headers:{'X-Pin':getCloudPin()}
@@ -1311,12 +1312,18 @@ async function loadFromCloud(){
         if(!res.ok) return false;
         const backup=JSON.parse(await res.text());
         if(!backup||!backup.localStorage) return false;
-        Object.entries(backup.localStorage).forEach(([k,v])=>localStorage.setItem(k,v));
+        if(!force){
+            const cloudTime=backup.exportedAt?new Date(backup.exportedAt).getTime():0;
+            const localTime=localStorage.getItem('qf_last_sync')?Number(localStorage.getItem('qf_last_sync')):0;
+            if(localTime>=cloudTime) return false;
+        }
+        Object.entries(backup.localStorage).forEach(([k,v])=>_origSetItem(k,v));
         for(const t of backup.templates||[]){
             const binary=atob(t.bytes);const bytes=new Uint8Array(binary.length);
             for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
             await dbSave(t.name,bytes);
         }
+        if(backup.exportedAt) _origSetItem('qf_last_sync',String(new Date(backup.exportedAt).getTime()));
         return true;
     }catch(e){console.warn('Cloud load failed:',e);return false;}
 }
@@ -1328,11 +1335,15 @@ localStorage.setItem=function(k,v){_origSetItem(k,v);if(k.startsWith('qf_'))sche
 /* ═══ INIT ═══ */
 async function init(){
     const hasLocalData=localStorage.getItem('qf_fields_v2');
-    if(!hasLocalData){
-        showToast('Syncing from cloud...');
-        const loaded=await loadFromCloud();
-        if(loaded) showToast('Data restored from cloud');
-        else showToast('No cloud data yet — start fresh');
+    try{
+        const loaded=await loadFromCloud(!hasLocalData);
+        if(loaded){
+            showToast(hasLocalData?'Updated from cloud':'Data restored from cloud');
+        } else if(!hasLocalData){
+            showToast('No cloud data yet — start fresh');
+        }
+    }catch(e){
+        if(!hasLocalData) showToast('Offline — start fresh');
     }
     loadSettings();
     await refreshTemplates();
