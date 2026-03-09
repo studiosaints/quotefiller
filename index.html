@@ -1407,8 +1407,56 @@ if(localStorage.getItem('qf_access_pin')){
     if(label) label.textContent='Choose a PIN (first time setup)';
 }
 
+/* ═══ CLOUD SYNC ═══ */
+const CLOUD_URL='https://voiceflow-proxy.edoardosanti.workers.dev';
+function getCloudPin(){return localStorage.getItem('qf_access_pin')||'';}
+
+let _cloudSaveTimer=null;
+function scheduleCloudSave(){
+    clearTimeout(_cloudSaveTimer);
+    _cloudSaveTimer=setTimeout(async()=>{
+        try{
+            const backup=await buildBackupData();
+            await fetch(CLOUD_URL+'/kv/quotefiller',{
+                method:'POST',
+                headers:{'Content-Type':'application/json','X-Pin':getCloudPin()},
+                body:JSON.stringify(backup)
+            });
+            console.log('Cloud sync saved');
+        }catch(e){console.warn('Cloud save failed:',e);}
+    },2000);
+}
+
+async function loadFromCloud(){
+    try{
+        const res=await fetch(CLOUD_URL+'/kv/quotefiller',{
+            headers:{'X-Pin':getCloudPin()}
+        });
+        if(!res.ok) return false;
+        const backup=JSON.parse(await res.text());
+        if(!backup||!backup.localStorage) return false;
+        Object.entries(backup.localStorage).forEach(([k,v])=>localStorage.setItem(k,v));
+        for(const t of backup.templates||[]){
+            const binary=atob(t.bytes);const bytes=new Uint8Array(binary.length);
+            for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+            await dbSave(t.name,bytes);
+        }
+        return true;
+    }catch(e){console.warn('Cloud load failed:',e);return false;}
+}
+
+// Hook into localStorage writes to auto-sync
+const _origSetItem=localStorage.setItem.bind(localStorage);
+localStorage.setItem=function(k,v){_origSetItem(k,v);if(k.startsWith('qf_'))scheduleCloudSave();};
+
 /* ═══ INIT ═══ */
 async function init(){
+    const hasLocalData=localStorage.getItem('qf_fields_v2');
+    if(!hasLocalData){
+        showToast('Loading from cloud...');
+        const loaded=await loadFromCloud();
+        if(loaded) showToast('Data restored from cloud');
+    }
     loadSettings();
     await refreshTemplates();
     renderCompanies();
@@ -1418,11 +1466,11 @@ async function init(){
     if(handle) updateAutoBackupStatus(handle.name);
 }
 
-// Save to backup file when tab is hidden or page is closing
+// Save to backup file + cloud when tab is hidden or page is closing
 document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='hidden') scheduleFileAutoSave();
+    if(document.visibilityState==='hidden'){scheduleFileAutoSave();scheduleCloudSave();}
 });
-window.addEventListener('pagehide',()=>scheduleFileAutoSave());
+window.addEventListener('pagehide',()=>{scheduleFileAutoSave();scheduleCloudSave();});
 </script>
 </body>
 </html>
