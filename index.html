@@ -1276,7 +1276,8 @@ function unlockApp(){
     }
 }
 if(localStorage.getItem('qf_access_pin')){
-    document.getElementById('pin-input').focus();
+    document.getElementById('pin-lock').classList.add('hidden');
+    init();
 } else {
     document.getElementById('pin-error').classList.add('hidden');
     const label=document.querySelector('#pin-lock p.text-xs.text-zinc-500');
