@@ -121,17 +121,9 @@
             Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" class="text-indigo-400 underline">aistudio.google.com/apikey</a>.
             Stored in your browser only.
         </p>
-        <div class="max-w-2xl mx-auto mt-4 pt-4 border-t border-zinc-800 flex items-center gap-3 flex-wrap">
-            <span class="text-xs text-zinc-500 shrink-0">Backup:</span>
-            <button onclick="exportBackup()" class="flex items-center gap-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">
-                <i class="fa-solid fa-floppy-disk text-emerald-400"></i> Save backup…
-            </button>
-            <label class="flex items-center gap-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
-                <i class="fa-solid fa-upload text-indigo-400"></i> Restore from backup
-                <input type="file" accept=".json" class="hidden" onchange="importBackup(this)">
-            </label>
-            <span id="backup-status" class="text-xs text-zinc-500"></span>
-            <span id="auto-backup-status" class="text-xs text-zinc-600"></span>
+        <div class="max-w-2xl mx-auto mt-4 pt-4 border-t border-zinc-800 flex items-center gap-3">
+            <i class="fa-solid fa-cloud text-emerald-500 text-xs"></i>
+            <span class="text-xs text-zinc-500">Cloud sync is on — your data saves automatically and loads on any device.</span>
         </div>
     </div>
 
@@ -542,122 +534,6 @@ async function buildBackupData(){
     return {version:2,exportedAt:new Date().toISOString(),localStorage:lsData,templates:tplData};
 }
 
-async function writeToBackupFile(handle){
-    const perm=await handle.queryPermission({mode:'readwrite'});
-    if(perm!=='granted'){
-        const req=await handle.requestPermission({mode:'readwrite'});
-        if(req!=='granted') return false;
-    }
-    const backup=await buildBackupData();
-    const writable=await handle.createWritable();
-    await writable.write(JSON.stringify(backup,null,2));
-    await writable.close();
-    return true;
-}
-
-
-function updateAutoBackupStatus(filename,lastSaved){
-    const el=document.getElementById('auto-backup-status');
-    if(!el) return;
-    if(filename){
-        el.innerHTML=`<span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i>${esc(filename)}</span>`+(lastSaved?` <span class="text-zinc-600 ml-2">saved ${lastSaved}</span>`:'');
-    }else{
-        el.textContent='Not configured — pick a file and it auto-saves on every change & when you close the tab.';
-        el.className='text-xs text-zinc-600';
-    }
-}
-
-let _autoFileSaveTimer=null;
-async function scheduleFileAutoSave(){
-    clearTimeout(_autoFileSaveTimer);
-    _autoFileSaveTimer=setTimeout(async()=>{
-        const handle=await settingsGet('backup_file_handle');
-        if(!handle) return;
-        try{
-            const ok=await writeToBackupFile(handle);
-            if(ok) updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
-        }catch(err){console.warn('Auto-save to file failed:',err);}
-    },1500);
-}
-
-async function exportBackup(){
-    const btn=document.querySelector('[onclick="exportBackup()"]');
-    const status=document.getElementById('backup-status');
-    btn.innerHTML='<i class="fa-solid fa-spinner fa-spin text-emerald-400"></i> Saving…';
-    try{
-        const backup=await buildBackupData();
-        const json=JSON.stringify(backup,null,2);
-        if(window.showSaveFilePicker){
-            // Let user pick exactly where to save, then remember for auto-save
-            let handle=await settingsGet('backup_file_handle');
-            try{
-                if(!handle){
-                    handle=await window.showSaveFilePicker({
-                        suggestedName:'quote-filler-backup.json',
-                        startIn:'documents',
-                        types:[{description:'JSON backup',accept:{'application/json':['.json']}}]
-                    });
-                    await settingsSet('backup_file_handle',handle);
-                }
-                const writable=await handle.createWritable();
-                await writable.write(json);
-                await writable.close();
-                updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
-                status.textContent=`Saved — auto-backup is now on`;
-                status.className='text-xs text-emerald-400';
-            }catch(e){
-                if(e.name==='AbortError') return; // user cancelled picker
-                // Handle lost permission — re-pick
-                if(e.name==='NotAllowedError'||e.name==='SecurityError'){
-                    await settingsSet('backup_file_handle',null);
-                    handle=await window.showSaveFilePicker({
-                        suggestedName:'quote-filler-backup.json',
-                        startIn:'documents',
-                        types:[{description:'JSON backup',accept:{'application/json':['.json']}}]
-                    });
-                    await settingsSet('backup_file_handle',handle);
-                    const writable=await handle.createWritable();
-                    await writable.write(json);
-                    await writable.close();
-                    updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
-                    status.textContent=`Saved — auto-backup is now on`;
-                    status.className='text-xs text-emerald-400';
-                } else { throw e; }
-            }
-        } else {
-            // Fallback for unsupported browsers
-            const blob=new Blob([json],{type:'application/json'});
-            downloadBlob(blob,`quote-filler-backup.json`);
-            status.textContent=`Saved to Downloads`;
-            status.className='text-xs text-emerald-400';
-        }
-    }catch(err){
-        if(err.name==='AbortError') return;
-        console.error(err);status.textContent='Save failed: '+err.message;status.className='text-xs text-red-400';
-    }
-    finally{btn.innerHTML='<i class="fa-solid fa-floppy-disk text-emerald-400"></i> Save backup…';}
-}
-
-async function importBackup(input){
-    const status=document.getElementById('backup-status');
-    const file=input.files[0];if(!file)return;
-    status.textContent='Importing…';status.className='text-xs text-zinc-400';
-    try{
-        const backup=JSON.parse(await file.text());
-        if(!backup.localStorage&&!backup.templates) throw new Error('Invalid backup file');
-        Object.entries(backup.localStorage||{}).forEach(([k,v])=>localStorage.setItem(k,v));
-        for(const t of backup.templates||[]){
-            const binary=atob(t.bytes);const bytes=new Uint8Array(binary.length);
-            for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-            await dbSave(t.name,bytes);
-        }
-        rebuildFieldDefs();await refreshTemplates();renderCompanies();renderFieldManager();updateFieldForm();
-        status.textContent=`Restored ${(backup.templates||[]).length} template(s) + all data`;
-        status.className='text-xs text-emerald-400';
-        showToast('Backup restored successfully');
-    }catch(err){console.error(err);status.textContent='Import failed: '+err.message;status.className='text-xs text-red-400';}
-    finally{input.value='';}
-}
 
 function getSavedCompanies(){try{return JSON.parse(localStorage.getItem('qf_companies')||'[]')}catch{return[]}}
 function getMappings(name){try{return(JSON.parse(localStorage.getItem('qf_mappings')||'{}'))[name]||[]}catch{return[]}}
@@ -893,7 +769,7 @@ function _persistCompany(d){
 let _autoSaveTimer=null;
 function autoSaveCompany(){
     clearTimeout(_autoSaveTimer);
-    _autoSaveTimer=setTimeout(()=>{_persistCompany(state.extractedData);scheduleFileAutoSave();},800);
+    _autoSaveTimer=setTimeout(()=>{_persistCompany(state.extractedData);},800);
 }
 function newCompany(){
     _persistCompany(state.extractedData); // save current before clearing
@@ -1453,24 +1329,23 @@ localStorage.setItem=function(k,v){_origSetItem(k,v);if(k.startsWith('qf_'))sche
 async function init(){
     const hasLocalData=localStorage.getItem('qf_fields_v2');
     if(!hasLocalData){
-        showToast('Loading from cloud...');
+        showToast('Syncing from cloud...');
         const loaded=await loadFromCloud();
         if(loaded) showToast('Data restored from cloud');
+        else showToast('No cloud data yet — start fresh');
     }
     loadSettings();
     await refreshTemplates();
     renderCompanies();
     renderFieldManager();
     updateFieldForm();
-    const handle=await settingsGet('backup_file_handle');
-    if(handle) updateAutoBackupStatus(handle.name);
 }
 
-// Save to backup file + cloud when tab is hidden or page is closing
+// Cloud save when tab is hidden or closing
 document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='hidden'){scheduleFileAutoSave();scheduleCloudSave();}
+    if(document.visibilityState==='hidden') scheduleCloudSave();
 });
-window.addEventListener('pagehide',()=>{scheduleFileAutoSave();scheduleCloudSave();});
+window.addEventListener('pagehide',()=>scheduleCloudSave());
 </script>
 </body>
 </html>
