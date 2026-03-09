@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Quote & Doc Filler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script>tailwindcss.config={theme:{extend:{fontFamily:{sans:['Inter','system-ui','sans-serif']}}}};</script>
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body { background: #09090b; color: #e4e4e7; }
+        .card { background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem; padding: 1.25rem; }
+        .drop-active { border-color: #6366f1 !important; background: rgba(99,102,241,0.05); }
+        #toast { transition: transform 0.3s, opacity 0.3s; }
+        .thumb-container { position: relative; }
+        .thumb-container .remove-btn {
+            position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+            border-radius: 50%; background: #ef4444; color: white; font-size: 10px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; opacity: 0; transition: opacity 0.15s;
+        }
+        .thumb-container:hover .remove-btn { opacity: 1; }
+        input[type="text"], input[type="password"], input[type="number"], select, textarea {
+            background: #09090b; border: 1px solid #3f3f46; border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem; color: #e4e4e7; width: 100%; font-size: 0.875rem;
+            transition: border-color 0.15s;
+        }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #6366f1; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+        #mapper-markers { pointer-events: none; }
+        .mapper-marker {
+            position: absolute; z-index: 10; cursor: grab;
+            user-select: none; touch-action: none; pointer-events: auto;
+            transform: translate(-5px, 0);
+        }
+        .mapper-marker.dragging { cursor: grabbing; z-index: 20; }
+        .mapper-marker .handle {
+            width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
+            border: 2px solid white; box-shadow: 0 0 3px rgba(0,0,0,0.5);
+            position: absolute; bottom: -4px; left: 0;
+        }
+        .mapper-marker .tag {
+            display: flex; align-items: center; gap: 3px;
+            position: absolute; bottom: 6px; left: -2px; white-space: nowrap;
+        }
+        .mapper-marker .label {
+            font-size: 9px; background: rgba(99,102,241,0.85); color: white;
+            padding: 1px 6px; border-radius: 3px; pointer-events: none; line-height: 1.4;
+        }
+        .mapper-marker .delete-btn {
+            width: 14px; height: 14px; border-radius: 50%; background: #ef4444;
+            color: white; font-size: 7px; display: none; align-items: center;
+            justify-content: center; cursor: pointer; pointer-events: auto; flex-shrink: 0;
+        }
+        .mapper-marker:hover .delete-btn { display: flex; }
+        .mapper-marker:hover .handle { background: #818cf8; box-shadow: 0 0 8px rgba(99,102,241,0.5); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- PIN Lock -->
+    <div id="pin-lock" class="fixed inset-0 bg-zinc-950 z-[9999] flex items-center justify-center">
+        <div class="text-center">
+            <div class="w-14 h-14 rounded-2xl bg-indigo-600/10 flex items-center justify-center mx-auto mb-4">
+                <i class="fa-solid fa-lock text-2xl text-indigo-400"></i>
+            </div>
+            <h2 class="text-lg font-semibold text-white mb-1">Quote & Doc Filler</h2>
+            <p class="text-xs text-zinc-500 mb-6">Enter PIN to continue</p>
+            <input id="pin-input" type="password" placeholder="PIN" autofocus
+                   class="w-48 text-center tracking-widest bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+                   onkeydown="if(event.key==='Enter')unlockApp()">
+            <br>
+            <button onclick="unlockApp()" class="mt-3 bg-white text-black font-semibold px-8 py-2 rounded-xl text-sm hover:bg-zinc-200 transition-colors">UNLOCK</button>
+            <p id="pin-error" class="hidden text-red-400 text-xs mt-3">Wrong PIN</p>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
+                <i class="fa-solid fa-file-invoice-dollar text-white text-sm"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-white leading-tight">Quote & Doc Filler</h1>
+                <p class="text-xs text-zinc-500">Paste screenshots. Fill PDFs. Download ZIP.</p>
+            </div>
+        </div>
+        <button onclick="toggleSettings()" class="text-zinc-400 hover:text-white transition-colors" title="Settings">
+            <i class="fa-solid fa-gear text-lg"></i>
+        </button>
+    </header>
+
+    <!-- Settings -->
+    <div id="settings-drawer" class="hidden border-b border-zinc-800 bg-zinc-900/50 px-6 py-4">
+        <div class="max-w-2xl mx-auto grid sm:grid-cols-3 gap-4">
+            <div>
+                <label class="text-xs font-medium text-zinc-400 mb-1 block">Gemini API Key</label>
+                <input type="password" id="api-key-input" placeholder="AIza..." onchange="saveSettings()">
+            </div>
+            <div>
+                <label class="text-xs font-medium text-zinc-400 mb-1 block">Model</label>
+                <select id="model-select" onchange="saveSettings()">
+                    <option value="gemini-flash-lite-latest" selected>gemini-flash-lite-latest (cheapest)</option>
+                    <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-xs font-medium text-zinc-400 mb-1 block">Default font size (PDF fill)</label>
+                <input type="number" id="fontsize-input" value="11" min="6" max="24" onchange="saveSettings()">
+            </div>
+        </div>
+        <p class="text-xs text-zinc-600 mt-3 max-w-2xl mx-auto">
+            Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" class="text-indigo-400 underline">aistudio.google.com/apikey</a>.
+            Stored in your browser only.
+        </p>
+        <div class="max-w-2xl mx-auto mt-4 pt-4 border-t border-zinc-800 flex items-center gap-3 flex-wrap">
+            <span class="text-xs text-zinc-500 shrink-0">Backup:</span>
+            <button onclick="exportBackup()" class="flex items-center gap-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">
+                <i class="fa-solid fa-floppy-disk text-emerald-400"></i> Save backup…
+            </button>
+            <label class="flex items-center gap-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
+                <i class="fa-solid fa-upload text-indigo-400"></i> Restore from backup
+                <input type="file" accept=".json" class="hidden" onchange="importBackup(this)">
+            </label>
+            <span id="backup-status" class="text-xs text-zinc-500"></span>
+            <span id="auto-backup-status" class="text-xs text-zinc-600"></span>
+        </div>
+    </div>
+
+    <!-- Main -->
+    <main class="flex-1 overflow-auto p-6">
+        <div class="max-w-7xl mx-auto grid lg:grid-cols-3 gap-6">
+
+            <!-- LEFT -->
+            <div class="space-y-6">
+
+                <!-- Templates -->
+                <div class="card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-file-pdf text-indigo-400"></i>
+                            <h2 class="font-semibold text-white">PDF Templates</h2>
+                        </div>
+                        <label class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg cursor-pointer transition-colors">
+                            <i class="fa-solid fa-plus mr-1"></i> Add
+                            <input type="file" multiple accept=".pdf" class="hidden" onchange="handleTemplateUpload(this.files)">
+                        </label>
+                    </div>
+                    <div id="template-list" class="space-y-2 max-h-72 overflow-y-auto">
+                        <p class="text-sm text-zinc-500 text-center py-4">No templates yet.</p>
+                    </div>
+                    <p class="text-xs text-zinc-600 mt-3">Upload PDFs, then click <strong class="text-zinc-400">Map</strong> to visually place fields.</p>
+                </div>
+
+                <!-- Saved Companies -->
+                <div class="card">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-building text-indigo-400"></i>
+                            <h2 class="font-semibold text-white">Saved Companies</h2>
+                        </div>
+                        <button onclick="newCompany()" title="New company" class="text-zinc-400 hover:text-white transition-colors"><i class="fa-solid fa-plus text-sm"></i></button>
+                    </div>
+                    <div class="relative mb-2">
+                        <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-xs pointer-events-none"></i>
+                        <input id="company-search" type="text" placeholder="Search…"
+                            class="!py-1.5 !pl-7 !text-xs !bg-zinc-900 w-full"
+                            oninput="renderCompanies(this.value)">
+                    </div>
+                    <div id="company-list" class="space-y-1.5 max-h-48 overflow-y-auto">
+                        <p class="text-sm text-zinc-500 text-center py-3">None yet.</p>
+                    </div>
+                </div>
+
+                <!-- Field Manager -->
+                <div class="card">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-sliders text-indigo-400"></i>
+                            <h2 class="font-semibold text-white">Fields</h2>
+                        </div>
+                        <button onclick="openAddField()" class="text-xs text-zinc-400 hover:text-white transition-colors"><i class="fa-solid fa-plus mr-1"></i>Add</button>
+                    </div>
+                    <div class="relative mb-2">
+                        <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-xs pointer-events-none"></i>
+                        <input id="field-search" type="text" placeholder="Search fields…" class="!py-1.5 !pl-7 !text-xs !bg-zinc-900 w-full" oninput="renderFieldManager(this.value)">
+                    </div>
+                    <div id="field-manager-list" class="max-h-72 overflow-y-auto space-y-px"></div>
+                    <div id="add-field-form" class="hidden mt-2 p-3 bg-zinc-800 rounded-lg border border-zinc-700 space-y-2">
+                        <div class="text-xs font-semibold text-zinc-300 mb-1">New Field</div>
+                        <select id="af-group" class="!text-xs !py-1.5 w-full"></select>
+                        <input id="af-label" type="text" placeholder="Label (e.g. PO Number)" class="!text-xs !py-1.5 w-full">
+                        <input id="af-key" type="text" placeholder="key (auto from label)" class="!text-xs !py-1.5 w-full font-mono">
+                        <input id="af-pinned" type="text" placeholder="Always fill as… (optional)" class="!text-xs !py-1.5 w-full">
+                        <div class="flex gap-2">
+                            <button onclick="confirmAddField()" class="flex-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-lg transition-colors">Add Field</button>
+                            <button onclick="closeAddField()" class="flex-1 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-300 py-1.5 rounded-lg transition-colors">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT -->
+            <div class="lg:col-span-2 space-y-6">
+
+                <!-- Document Fields (shown when templates are checked) -->
+                <div id="data-section" class="hidden space-y-6">
+                    <div class="card">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-pen-to-square text-indigo-400"></i>
+                                <h2 class="font-semibold text-white">Document Fields</h2>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button onclick="saveCompany()" class="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">
+                                    <i class="fa-solid fa-floppy-disk mr-1"></i> Save Company
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-zinc-500 mb-4"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1"></span> Green = mapped in your selected PDFs. Fill these out and hit Generate.</p>
+                        <div id="data-form" class="space-y-5"></div>
+                    </div>
+                </div>
+
+                <!-- Screenshots (optional, for auto-fill via Gemini) -->
+                <div class="card">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-camera text-indigo-400"></i>
+                            <h2 class="font-semibold text-white">Auto-Fill from Screenshots</h2>
+                        </div>
+                        <span class="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-1 rounded">OPTIONAL</span>
+                    </div>
+
+                    <!-- PRIMARY: Paste box -->
+                    <div id="paste-box" tabindex="0"
+                         class="border-2 border-dashed border-zinc-600 rounded-xl p-6 text-center cursor-text select-none transition-colors focus:border-indigo-500 focus:outline-none hover:border-zinc-500">
+                        <i class="fa-solid fa-paste text-2xl text-zinc-600 mb-2"></i>
+                        <p class="text-sm text-zinc-400">Click here, then <kbd class="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-300 text-[11px]">Cmd+V</kbd> to paste screenshots</p>
+                        <p class="text-xs text-zinc-600 mt-1">Company info, machine quotes, price sheets, etc.</p>
+                    </div>
+
+                    <!-- SECONDARY: Drag-drop + browse -->
+                    <div class="flex items-center gap-3 mt-3">
+                        <div id="drop-zone" class="flex-1 border border-dashed border-zinc-700 rounded-lg p-3 text-center transition-colors cursor-pointer text-xs text-zinc-500"
+                             onclick="document.getElementById('screenshot-input').click()">
+                            <i class="fa-solid fa-cloud-arrow-up mr-1 text-zinc-600"></i> Drag & drop or <span class="text-indigo-400 underline">browse files</span>
+                            <input type="file" id="screenshot-input" multiple accept="image/*" class="hidden" onchange="handleScreenshotFiles(this.files)">
+                        </div>
+                    </div>
+
+                    <div id="screenshot-grid" class="flex flex-wrap gap-3 mt-4"></div>
+
+                    <!-- Extract button (only useful when screenshots exist) -->
+                    <button onclick="extractData()" id="extract-btn"
+                        class="w-full mt-4 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-wand-magic-sparkles text-indigo-400"></i> Extract & Auto-Fill Fields
+                    </button>
+                </div>
+
+                <!-- Generate -->
+                <div id="generate-section" class="hidden">
+                    <button onclick="generateDocuments()" id="generate-btn"
+                        class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl transition-colors flex items-center justify-center gap-2 text-lg">
+                        <i class="fa-solid fa-file-zipper"></i> Generate All Documents
+                    </button>
+                    <div id="progress-container" class="hidden mt-4">
+                        <div class="w-full bg-zinc-800 rounded-full h-2">
+                            <div id="progress-bar" class="bg-indigo-500 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <p id="progress-text" class="text-xs text-zinc-500 mt-1.5 text-center"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ========== FIELD MAPPER MODAL ========== -->
+    <div id="mapper-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-zinc-900 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col border border-zinc-700 shadow-2xl">
+            <!-- Modal header -->
+            <div class="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0">
+                <div>
+                    <h3 class="font-bold text-white" id="mapper-title">Map Fields</h3>
+                    <p class="text-xs text-zinc-500">Click to place. Drag to move. X to delete. Text previews on the PDF.</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="mapperPrevPage()" class="text-zinc-400 hover:text-white px-2"><i class="fa-solid fa-chevron-left"></i></button>
+                    <span class="text-sm text-zinc-300">Page <span id="mapper-page-num">1</span> / <span id="mapper-page-total">1</span></span>
+                    <button onclick="mapperNextPage()" class="text-zinc-400 hover:text-white px-2"><i class="fa-solid fa-chevron-right"></i></button>
+                    <div class="w-px h-6 bg-zinc-700 mx-1"></div>
+                    <button onclick="closeMapper()" class="text-zinc-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+            </div>
+            <!-- Field selector -->
+            <div class="px-4 py-3 border-b border-zinc-800 flex items-center gap-3 shrink-0 flex-wrap">
+                <label class="text-xs text-zinc-400 shrink-0">Place field:</label>
+                <select id="mapper-field-select" class="!w-auto !text-xs !py-1.5 max-w-xs"></select>
+                <span class="text-xs text-zinc-600">then click on the PDF where it should go</span>
+            </div>
+            <!-- Canvas area -->
+            <div class="flex-1 overflow-auto p-4 flex justify-center bg-zinc-950">
+                <div id="mapper-canvas-wrap" class="relative inline-block">
+                    <canvas id="mapper-canvas" class="cursor-crosshair shadow-lg"></canvas>
+                    <div id="mapper-markers" class="absolute inset-0"></div>
+                </div>
+            </div>
+            <!-- Footer -->
+            <div class="p-4 border-t border-zinc-800 flex items-center justify-between shrink-0">
+                <span id="mapper-count" class="text-xs text-zinc-500">0 fields mapped</span>
+                <button onclick="closeMapper()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 translate-y-20 opacity-0 pointer-events-none">
+        <div id="toast-inner" class="px-5 py-3 rounded-lg shadow-2xl text-sm font-medium"></div>
+    </div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ═══ CONFIG ═══ */
+const DEFAULT_FIELD_GROUPS = [
+    { name:'Dates', icon:'fa-calendar', fields:[
+        {key:'date',label:'Date'},
+        {key:'retail_sale_date',label:'Retail Sale Date'},
+        {key:'delivery_date',label:'Delivery Date'},
+        {key:'first_used_date',label:'First Used Date'},
+    ]},
+    { name:'Company', icon:'fa-building', fields:[
+        {key:'company_name',label:'Company Name'},
+        {key:'company_billing_street',label:'Billing Street'},
+        {key:'company_billing_city_state',label:'Billing City, State ZIP'},
+        {key:'company_delivery_street',label:'Delivery Street'},
+        {key:'company_delivery_city_state',label:'Delivery City, State ZIP'},
+    ]},
+    { name:'Client', icon:'fa-user', fields:[
+        {key:'client_first_name',label:'First Name'},
+        {key:'client_last_name',label:'Last Name'},
+        {key:'client_full_name',label:'Full Name',computed:true},
+        {key:'client_phone',label:'Phone Number'},
+        {key:'client_email',label:'Email'},
+        {key:'client_title',label:'Title'},
+        {key:'alternate_contact_phone',label:'Alternate Phone'},
+        {key:'client_ssn',label:"Client's SSN"},
+        {key:'client_dob',label:'Date of Birth'},
+        {key:'company_tax_id',label:'Company Tax ID'},
+    ]},
+    { name:'Machine', icon:'fa-gear', fields:[
+        {key:'machine_model',label:'Machine Model'},
+        {key:'machine_year',label:'Machine Year'},
+        {key:'vin',label:'VIN'},
+        {key:'hours_bales',label:'Hours/Bales'},
+    ]},
+    { name:'Sale Info', icon:'fa-handshake', fields:[
+        {key:'sale_type',label:'Sale Type',prefill:'X'},
+        {key:'market_segment',label:'Market Segment'},
+        {key:'rep_full_name',label:"Rep's Full Name",prefill:'Edoardo Santi'},
+    ]},
+    { name:'Bill of Sale', icon:'fa-file-contract', fields:[
+        {key:'purchase_price',label:'Purchase Price'},
+        {key:'vin_bill_of_sale',label:'VIN (spaced)',computed:true},
+        {key:'date_of_sale_bill',label:'Date of Sale (spaced)',computed:true},
+    ]},
+    { name:'Coverage / Warranty', icon:'fa-shield-halved', fields:[
+        {key:'cov_prem_12',  label:'Premium 12 mo. (Parts & Labor, Unlimited Hours + 1 PM pkg)', checkbox:true},
+        {key:'cov_prem_24',  label:'Premium 24 mo. (Parts & Labor, Unlimited Hours + 1 PM pkg)', checkbox:true},
+        {key:'cov_prem_pm2', label:'Additional Planned Maintenance — package 2', checkbox:true},
+        {key:'cov_prem_pm3', label:'Additional Planned Maintenance — package 3', checkbox:true},
+        {key:'cov_base_12',  label:'Base 12 mo. / 1000 hrs (Parts & Labor, No PM)', checkbox:true},
+        {key:'cov_base_24',  label:'Base 24 mo. / 2000 hrs (Parts & Labor, No PM)', checkbox:true},
+        {key:'cov_pm1',      label:'Planned Maintenance Only — package 1', checkbox:true},
+        {key:'cov_pm2',      label:'Planned Maintenance Only — package 2', checkbox:true},
+        {key:'cov_pm3',      label:'Planned Maintenance Only — package 3', checkbox:true},
+    ]},
+    { name:'Lienholder', icon:'fa-landmark', hasSelector:true, fields:[
+        {key:'lienholder_name',label:"Lienholder's Name"},
+        {key:'lienholder_address',label:'Mailing Address'},
+        {key:'lienholder_city',label:'City'},
+        {key:'lienholder_state',label:'State'},
+        {key:'lienholder_zip',label:'ZIP Code'},
+        {key:'lienholder_phone',label:'Telephone No.'},
+    ]},
+];
+
+// Dynamic field groups — loaded from localStorage, seeded from defaults on first run
+let FIELD_GROUPS = [];
+let ALL_KEYS = [];
+let KEY_LABELS = {};
+
+function loadFieldConfig(){
+    try{
+        const stored=localStorage.getItem('qf_fields_v2');
+        if(stored) return JSON.parse(stored);
+    }catch{}
+    // Seed: convert prefill → pinned for storage
+    const seed=JSON.parse(JSON.stringify(DEFAULT_FIELD_GROUPS)).map(g=>({
+        ...g,
+        fields:g.fields.map(f=>({...f,pinned:f.prefill||''}))
+    }));
+    localStorage.setItem('qf_fields_v2',JSON.stringify(seed));
+    return seed;
+}
+function saveFieldConfig(cfg){
+    localStorage.setItem('qf_fields_v2',JSON.stringify(cfg));
+    rebuildFieldDefs();
+}
+function rebuildFieldDefs(){
+    FIELD_GROUPS=loadFieldConfig();
+    ALL_KEYS=FIELD_GROUPS.flatMap(g=>g.fields.filter(f=>!f.hidden).map(f=>f.key));
+    KEY_LABELS={};
+    FIELD_GROUPS.forEach(g=>g.fields.forEach(f=>{KEY_LABELS[f.key]=f.label;}));
+}
+rebuildFieldDefs();
+
+const EXTRACTABLE_KEYS = [
+    'date','company_name','company_billing_street','company_billing_city_state',
+    'company_delivery_street','company_delivery_city_state',
+    'client_first_name','client_last_name','client_phone','client_email','client_title',
+    'alternate_contact_phone','machine_model','machine_year','vin','hours_bales',
+    'market_segment','retail_sale_date','delivery_date','first_used_date',
+    'client_ssn','company_tax_id','client_dob'
+];
+
+const LIENHOLDER_KEYS = ['lienholder_name','lienholder_address','lienholder_city','lienholder_state','lienholder_zip','lienholder_phone'];
+
+const DB_NAME = 'QuoteFillerDB', DB_VER = 1, STORE = 'templates';
+
+/* ═══ STATE ═══ */
+const state = { templates:[], screenshots:[], extractedData:{}, selectedLienholder:'' };
+
+/* ═══ HELPERS ═══ */
+function fmtDate(d){ return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear(); }
+
+function recomputeFields(){
+    const d=state.extractedData;
+    d.client_full_name=[d.client_first_name,d.client_last_name].filter(Boolean).join(' ');
+    if(d.vin) d.vin_bill_of_sale=d.vin.replace(/\s/g,'').split('').join('       ');
+    else d.vin_bill_of_sale='';
+    if(d.date&&d.date.includes('/')) d.date_of_sale_bill=d.date.split('/').join('     ');
+    else d.date_of_sale_bill='';
+    ['client_full_name','vin_bill_of_sale','date_of_sale_bill'].forEach(k=>{
+        const el=document.querySelector(`[data-field="${k}"]`);
+        if(el) el.value=d[k]||'';
+    });
+}
+
+/* ═══ LIENHOLDER PRESETS ═══ */
+function getLienholderPresets(){try{return JSON.parse(localStorage.getItem('qf_lienholders')||'{}')}catch{return{}}}
+function saveLienholderPreset(name){
+    if(!name)return;
+    const presets=getLienholderPresets(), p={};
+    LIENHOLDER_KEYS.forEach(k=>{p[k]=state.extractedData[k]||'';});
+    presets[name]=p;
+    localStorage.setItem('qf_lienholders',JSON.stringify(presets));
+}
+function selectLienholder(name){
+    state.selectedLienholder=name;
+    if(!name){ LIENHOLDER_KEYS.forEach(k=>{state.extractedData[k]='';}); }
+    else{
+        const preset=getLienholderPresets()[name]||{};
+        LIENHOLDER_KEYS.forEach(k=>{state.extractedData[k]=preset[k]||'';});
+    }
+    LIENHOLDER_KEYS.forEach(k=>{
+        const el=document.querySelector(`[data-field="${k}"]`);
+        if(el) el.value=state.extractedData[k]||'';
+    });
+}
+
+/* ═══ IndexedDB ═══ */
+function openDB(){
+    return new Promise((res,rej)=>{
+        const r=indexedDB.open(DB_NAME,DB_VER);
+        r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:'name'});
+        r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+    });
+}
+async function dbSave(name,bytes){
+    const db=await openDB();
+    return new Promise((res,rej)=>{const tx=db.transaction(STORE,'readwrite');
+        tx.objectStore(STORE).put({name,bytes:new Uint8Array(bytes),addedAt:Date.now()});
+        tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+}
+async function dbGetAll(){
+    const db=await openDB();
+    return new Promise((res,rej)=>{const r=db.transaction(STORE,'readonly').objectStore(STORE).getAll();
+        r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+}
+async function dbDelete(name){
+    const db=await openDB();
+    return new Promise((res,rej)=>{const tx=db.transaction(STORE,'readwrite');
+        tx.objectStore(STORE).delete(name);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+}
+
+/* ═══ SETTINGS ═══ */
+const GEMINI_KEY='AIzaSyDV75oGeKWtf5T2ti_w6BRXiVccz_GZKr0';
+function loadSettings(){
+    document.getElementById('api-key-input').value=localStorage.getItem('qf_apikey')||GEMINI_KEY;
+    if(!localStorage.getItem('qf_apikey'))localStorage.setItem('qf_apikey',GEMINI_KEY);
+    document.getElementById('model-select').value=localStorage.getItem('qf_model')||'gemini-flash-lite-latest';
+    document.getElementById('fontsize-input').value=localStorage.getItem('qf_fontsize')||'11';
+}
+function saveSettings(){
+    localStorage.setItem('qf_apikey',document.getElementById('api-key-input').value.trim());
+    localStorage.setItem('qf_model',document.getElementById('model-select').value);
+    localStorage.setItem('qf_fontsize',document.getElementById('fontsize-input').value);
+    showToast('Settings saved');
+}
+function toggleSettings(){document.getElementById('settings-drawer').classList.toggle('hidden');}
+
+/* ═══ BACKUP ═══ */
+// Separate IDB for storing the file handle (handles aren't JSON-serialisable)
+function openSettingsDB(){
+    return new Promise((res,rej)=>{
+        const r=indexedDB.open('QuoteFillerSettings',1);
+        r.onupgradeneeded=()=>r.result.createObjectStore('kv',{keyPath:'k'});
+        r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+    });
+}
+async function settingsGet(k){
+    try{const db=await openSettingsDB();return new Promise(res=>{const r=db.transaction('kv','readonly').objectStore('kv').get(k);r.onsuccess=()=>res(r.result?.v??null);r.onerror=()=>res(null);});}catch{return null;}
+}
+async function settingsSet(k,v){
+    try{const db=await openSettingsDB();return new Promise((res,rej)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put({k,v});tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch{}
+}
+
+async function buildBackupData(){
+    const lsData={};
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith('qf_'))lsData[k]=localStorage.getItem(k);}
+    const templates=await dbGetAll();
+    const tplData=templates.map(t=>({name:t.name,bytes:btoa(Array.from(t.bytes).map(b=>String.fromCharCode(b)).join(''))}));
+    return {version:2,exportedAt:new Date().toISOString(),localStorage:lsData,templates:tplData};
+}
+
+async function writeToBackupFile(handle){
+    const perm=await handle.queryPermission({mode:'readwrite'});
+    if(perm!=='granted'){
+        const req=await handle.requestPermission({mode:'readwrite'});
+        if(req!=='granted') return false;
+    }
+    const backup=await buildBackupData();
+    const writable=await handle.createWritable();
+    await writable.write(JSON.stringify(backup,null,2));
+    await writable.close();
+    return true;
+}
+
+
+function updateAutoBackupStatus(filename,lastSaved){
+    const el=document.getElementById('auto-backup-status');
+    if(!el) return;
+    if(filename){
+        el.innerHTML=`<span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i>${esc(filename)}</span>`+(lastSaved?` <span class="text-zinc-600 ml-2">saved ${lastSaved}</span>`:'');
+    }else{
+        el.textContent='Not configured — pick a file and it auto-saves on every change & when you close the tab.';
+        el.className='text-xs text-zinc-600';
+    }
+}
+
+let _autoFileSaveTimer=null;
+async function scheduleFileAutoSave(){
+    clearTimeout(_autoFileSaveTimer);
+    _autoFileSaveTimer=setTimeout(async()=>{
+        const handle=await settingsGet('backup_file_handle');
+        if(!handle) return;
+        try{
+            const ok=await writeToBackupFile(handle);
+            if(ok) updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
+        }catch(err){console.warn('Auto-save to file failed:',err);}
+    },1500);
+}
+
+async function exportBackup(){
+    const btn=document.querySelector('[onclick="exportBackup()"]');
+    const status=document.getElementById('backup-status');
+    btn.innerHTML='<i class="fa-solid fa-spinner fa-spin text-emerald-400"></i> Saving…';
+    try{
+        const backup=await buildBackupData();
+        const json=JSON.stringify(backup,null,2);
+        if(window.showSaveFilePicker){
+            // Let user pick exactly where to save, then remember for auto-save
+            let handle=await settingsGet('backup_file_handle');
+            try{
+                if(!handle){
+                    handle=await window.showSaveFilePicker({
+                        suggestedName:'quote-filler-backup.json',
+                        startIn:'documents',
+                        types:[{description:'JSON backup',accept:{'application/json':['.json']}}]
+                    });
+                    await settingsSet('backup_file_handle',handle);
+                }
+                const writable=await handle.createWritable();
+                await writable.write(json);
+                await writable.close();
+                updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
+                status.textContent=`Saved — auto-backup is now on`;
+                status.className='text-xs text-emerald-400';
+            }catch(e){
+                if(e.name==='AbortError') return; // user cancelled picker
+                // Handle lost permission — re-pick
+                if(e.name==='NotAllowedError'||e.name==='SecurityError'){
+                    await settingsSet('backup_file_handle',null);
+                    handle=await window.showSaveFilePicker({
+                        suggestedName:'quote-filler-backup.json',
+                        startIn:'documents',
+                        types:[{description:'JSON backup',accept:{'application/json':['.json']}}]
+                    });
+                    await settingsSet('backup_file_handle',handle);
+                    const writable=await handle.createWritable();
+                    await writable.write(json);
+                    await writable.close();
+                    updateAutoBackupStatus(handle.name,new Date().toLocaleTimeString());
+                    status.textContent=`Saved — auto-backup is now on`;
+                    status.className='text-xs text-emerald-400';
+                } else { throw e; }
+            }
+        } else {
+            // Fallback for unsupported browsers
+            const blob=new Blob([json],{type:'application/json'});
+            downloadBlob(blob,`quote-filler-backup.json`);
+            status.textContent=`Saved to Downloads`;
+            status.className='text-xs text-emerald-400';
+        }
+    }catch(err){
+        if(err.name==='AbortError') return;
+        console.error(err);status.textContent='Save failed: '+err.message;status.className='text-xs text-red-400';
+    }
+    finally{btn.innerHTML='<i class="fa-solid fa-floppy-disk text-emerald-400"></i> Save backup…';}
+}
+
+async function importBackup(input){
+    const status=document.getElementById('backup-status');
+    const file=input.files[0];if(!file)return;
+    status.textContent='Importing…';status.className='text-xs text-zinc-400';
+    try{
+        const backup=JSON.parse(await file.text());
+        if(!backup.localStorage&&!backup.templates) throw new Error('Invalid backup file');
+        Object.entries(backup.localStorage||{}).forEach(([k,v])=>localStorage.setItem(k,v));
+        for(const t of backup.templates||[]){
+            const binary=atob(t.bytes);const bytes=new Uint8Array(binary.length);
+            for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+            await dbSave(t.name,bytes);
+        }
+        rebuildFieldDefs();await refreshTemplates();renderCompanies();renderFieldManager();updateFieldForm();
+        status.textContent=`Restored ${(backup.templates||[]).length} template(s) + all data`;
+        status.className='text-xs text-emerald-400';
+        showToast('Backup restored successfully');
+    }catch(err){console.error(err);status.textContent='Import failed: '+err.message;status.className='text-xs text-red-400';}
+    finally{input.value='';}
+}
+
+function getSavedCompanies(){try{return JSON.parse(localStorage.getItem('qf_companies')||'[]')}catch{return[]}}
+function getMappings(name){try{return(JSON.parse(localStorage.getItem('qf_mappings')||'{}'))[name]||[]}catch{return[]}}
+function saveMappingsFor(name,arr){const all=JSON.parse(localStorage.getItem('qf_mappings')||'{}');all[name]=arr;localStorage.setItem('qf_mappings',JSON.stringify(all));}
+
+/* ═══ TEMPLATES ═══ */
+async function handleTemplateUpload(files){
+    for(const f of files){if(!f.name.toLowerCase().endsWith('.pdf'))continue;await dbSave(f.name,await f.arrayBuffer());}
+    await refreshTemplates(); showToast(`${files.length} template(s) added`);
+}
+async function removeTemplate(name){await dbDelete(name);await refreshTemplates();showToast('Removed');}
+async function refreshTemplates(){
+    state.templates=await dbGetAll();
+    for(const t of state.templates){
+        if(t._scanned)continue;
+        try{
+            const pdf=await PDFLib.PDFDocument.load(t.bytes,{ignoreEncryption:true});
+            t.formFields=pdf.getForm().getFields().map(f=>f.getName());
+        }catch{t.formFields=[];}
+        t._scanned=true;
+    }
+    renderTemplates();updateFieldForm();
+}
+function renderTemplates(){
+    const el=document.getElementById('template-list');
+    if(!state.templates.length){el.innerHTML='<p class="text-sm text-zinc-500 text-center py-4">No templates yet.</p>';return;}
+    el.innerHTML=state.templates.sort((a,b)=>a.name.localeCompare(b.name)).map(t=>{
+        const vizMapped=getMappings(t.name).length;
+        return `<div class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800 transition-colors group">
+            <input type="checkbox" class="template-cb accent-indigo-500 w-4 h-4 shrink-0" data-name="${esc(t.name)}" checked>
+            <i class="fa-solid fa-file-pdf text-red-400 text-sm shrink-0"></i>
+            <span class="text-sm text-zinc-300 truncate flex-1" title="${esc(t.name)}">${esc(t.name)}</span>
+            ${vizMapped?`<span class="text-[10px] bg-emerald-900 text-emerald-300 px-1.5 py-0.5 rounded shrink-0">${vizMapped}</span>`:''}
+            <button onclick="openMapper('${esc(t.name)}')" class="text-xs text-indigo-400 hover:text-indigo-300 shrink-0 font-medium">Map</button>
+            <button onclick="removeTemplate('${esc(t.name)}')" class="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0"><i class="fa-solid fa-trash-can text-xs"></i></button>
+        </div>`;
+    }).join('');
+}
+
+/* ═══ SCREENSHOTS ═══ */
+function processImageBlob(blob, name){
+    const reader=new FileReader();
+    reader.onload=()=>{
+        state.screenshots.push({name,mimeType:blob.type,base64:reader.result.split(',')[1],preview:reader.result});
+        renderScreenshots(); showToast('Screenshot added');
+    };
+    reader.readAsDataURL(blob);
+}
+function handleScreenshotFiles(files){for(const f of files){if(f.type.startsWith('image/'))processImageBlob(f,f.name);}}
+function removeScreenshot(i){state.screenshots.splice(i,1);renderScreenshots();}
+function renderScreenshots(){
+    const g=document.getElementById('screenshot-grid');
+    if(!state.screenshots.length){g.innerHTML='';return;}
+    g.innerHTML=state.screenshots.map((s,i)=>`
+        <div class="thumb-container">
+            <img src="${s.preview}" alt="${esc(s.name)}" class="w-24 h-24 object-cover rounded-lg border border-zinc-700">
+            <div class="remove-btn" onclick="removeScreenshot(${i})"><i class="fa-solid fa-xmark"></i></div>
+        </div>`).join('');
+}
+
+const dz=document.getElementById('drop-zone');
+['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('drop-active');}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('drop-active');}));
+dz.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length)handleScreenshotFiles(ev.dataTransfer.files);});
+
+const pasteBox=document.getElementById('paste-box');
+function handlePasteEvent(ev){
+    const items=ev.clipboardData?.items;if(!items)return;
+    let found=false;
+    for(const item of items){
+        if(item.type.startsWith('image/')){processImageBlob(item.getAsFile(),`paste-${Date.now()}.png`);found=true;}
+    }
+    if(found){
+        ev.preventDefault();
+        pasteBox.style.borderColor='#22c55e';
+        setTimeout(()=>{pasteBox.style.borderColor='';},800);
+    }
+}
+pasteBox.addEventListener('paste',handlePasteEvent);
+document.addEventListener('paste',ev=>{
+    if(ev.target===pasteBox||pasteBox.contains(ev.target))return;
+    handlePasteEvent(ev);
+});
+
+/* ═══ GEMINI API ═══ */
+async function extractData(){
+    const apiKey=localStorage.getItem('qf_apikey');
+    if(!apiKey){showToast('Set your Gemini API key in Settings first','error');toggleSettings();return;}
+    if(!state.screenshots.length){showToast('Add at least one screenshot','error');return;}
+    const model=localStorage.getItem('qf_model')||'gemini-flash-lite-latest';
+    const btn=document.getElementById('extract-btn');
+    btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Extracting...';
+    try{
+        const imageParts=state.screenshots.map(s=>({inlineData:{mimeType:s.mimeType,data:s.base64}}));
+        const schemaProps={};EXTRACTABLE_KEYS.forEach(k=>{schemaProps[k]={type:'STRING',nullable:true};});
+        const body={
+            contents:[{parts:[
+                {text:'You are an expert data extractor for business documents and equipment sales. Extract ALL relevant information from the provided image(s). Merge info from all images. Use MM/DD/YYYY for dates. Use null for any field not found.'},
+                ...imageParts
+            ]}],
+            generationConfig:{responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:schemaProps}}
+        };
+        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+        });
+        if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`API ${res.status}`);}
+        const data=await res.json();
+        const text=data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if(!text)throw new Error('Empty model response');
+        const extracted=JSON.parse(text);
+        Object.entries(extracted).forEach(([k,v])=>{if(v&&v!=='null')state.extractedData[k]=v;});
+        updateFieldForm();
+        showToast('Data extracted — fields auto-filled');
+    }catch(err){console.error(err);showToast(err.message||'Extraction failed','error');}
+    finally{btn.disabled=false;btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles text-indigo-400"></i> Extract & Auto-Fill Fields';}
+}
+
+/* ═══ DATA FORM (template-aware) ═══ */
+function updateFieldForm(){
+    const checked=[...document.querySelectorAll('.template-cb:checked')].map(cb=>cb.dataset.name);
+    const section=document.getElementById('data-section');
+    const genSection=document.getElementById('generate-section');
+    if(!checked.length){section.classList.add('hidden');genSection.classList.add('hidden');return;}
+    section.classList.remove('hidden');genSection.classList.remove('hidden');
+
+    const mappedFields=new Set();
+    for(const name of checked){
+        getMappings(name).forEach(m=>mappedFields.add(m.fieldKey));
+        const tmpl=state.templates.find(t=>t.name===name);
+        if(tmpl&&tmpl.formFields) tmpl.formFields.forEach(f=>mappedFields.add(f));
+    }
+    const hasMappings=mappedFields.size>0;
+
+    const d=state.extractedData;
+    if(!d.date) d.date=fmtDate(new Date());
+    // Apply pinned (fixed) values for any field that has one and isn't already filled
+    FIELD_GROUPS.forEach(g=>g.fields.forEach(f=>{if(f.pinned&&!d[f.key]) d[f.key]=f.pinned;}));
+    recomputeFields();
+
+    const form=document.getElementById('data-form');
+    form.innerHTML=FIELD_GROUPS.map(g=>{
+        const visibleFields=g.fields.filter(f=>!f.hidden);
+        let extra='';
+        if(g.hasSelector){
+            extra=`<div class="col-span-full mb-1">
+                <select id="lienholder-select" class="!text-sm !py-2" onchange="selectLienholder(this.value)">
+                    <option value="">-- No Lienholder --</option>
+                    <option value="DLL" ${state.selectedLienholder==='DLL'?'selected':''}>DLL</option>
+                    <option value="Wells Fargo" ${state.selectedLienholder==='Wells Fargo'?'selected':''}>Wells Fargo</option>
+                </select>
+                <p class="text-[10px] text-zinc-600 mt-1">Fill in once per lienholder — values are remembered.</p>
+            </div>`;
+        }
+        if(!visibleFields.length) return '';
+        return `<div>
+        <h3 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><i class="fa-solid ${g.icon}"></i> ${g.name}</h3>
+        <div class="grid sm:grid-cols-2 gap-3">${extra}${visibleFields.map(f=>{
+            const mapped=hasMappings&&mappedFields.has(f.key);
+            const comp=f.computed;
+            if(f.checkbox){
+            const checked=!!d[f.key];
+            return `<div class="col-span-full">
+                <button type="button" data-field="${f.key}" data-checkbox="1"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors text-left text-sm
+                        ${checked?'border-indigo-500 bg-indigo-950/50 text-indigo-200':'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500'}">
+                    <span class="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors
+                        ${checked?'border-indigo-400 bg-indigo-500':'border-zinc-600 bg-transparent'}">
+                        ${checked?'<i class="fa-solid fa-check text-white" style="font-size:8px"></i>':''}
+                    </span>
+                    ${f.label}${mapped?' <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-1"></span>':''}
+                </button>
+            </div>`;
+        }
+        return `<div>
+                <label class="text-xs mb-1 flex items-center gap-1.5 ${mapped?'text-emerald-400':comp?'text-zinc-600':'text-zinc-400'}">
+                    ${f.label}${mapped?' <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>':''}${comp?' <span class="text-[10px]">(auto)</span>':''}
+                </label>
+                <input type="text" data-field="${f.key}" value="${esc(d[f.key]||'')}"
+                    class="${mapped?'!border-emerald-900':''} ${comp?'!bg-zinc-900/50 !text-zinc-500':''}"
+                    ${comp?'readonly tabindex="-1"':''}>
+            </div>`;
+        }).join('')}</div></div>`;
+    }).join('');
+
+    form.querySelectorAll('[data-field]').forEach(el=>{
+        if(el.dataset.checkbox){
+            el.addEventListener('click',()=>{
+                const k=el.dataset.field;
+                state.extractedData[k]=state.extractedData[k]?'':'X';
+                updateFieldForm();
+            });
+            return;
+        }
+        if(el.hasAttribute('readonly'))return;
+        el.addEventListener('input',()=>{
+            state.extractedData[el.dataset.field]=el.value;
+            recomputeFields();
+            if(state.selectedLienholder&&LIENHOLDER_KEYS.includes(el.dataset.field))
+                saveLienholderPreset(state.selectedLienholder);
+            autoSaveCompany();
+        });
+    });
+}
+
+function collectFormData(){
+    const d={...state.extractedData};
+    const mainDate=d.date||fmtDate(new Date());
+    if(!d.retail_sale_date) d.retail_sale_date=mainDate;
+    if(!d.delivery_date) d.delivery_date=mainDate;
+    if(!d.first_used_date) d.first_used_date=mainDate;
+    d.client_full_name=[d.client_first_name,d.client_last_name].filter(Boolean).join(' ');
+    if(d.vin) d.vin_bill_of_sale=d.vin.replace(/\s/g,'').split('').join('      ');
+    if(d.date&&d.date.includes('/')) d.date_of_sale_bill=d.date.split('/').join('     ');
+    return d;
+}
+
+/* ═══ SAVED COMPANIES ═══ */
+function saveCompany(){
+    const d=state.extractedData;if(!d.company_name){showToast('Need a company name','error');return;}
+    _persistCompany(d);
+    showToast(`"${d.company_name}" saved`);
+}
+function _persistCompany(d){
+    if(!d.company_name)return;
+    const arr=getSavedCompanies();
+    const idx=arr.findIndex(c=>c.company_name===d.company_name);
+    const entry={savedAt:Date.now()};
+    ALL_KEYS.forEach(k=>{if(d[k])entry[k]=d[k];});
+    if(idx>=0)arr[idx]=entry;else arr.unshift(entry);
+    localStorage.setItem('qf_companies',JSON.stringify(arr.slice(0,50)));
+    renderCompanies();
+}
+let _autoSaveTimer=null;
+function autoSaveCompany(){
+    clearTimeout(_autoSaveTimer);
+    _autoSaveTimer=setTimeout(()=>{_persistCompany(state.extractedData);scheduleFileAutoSave();},800);
+}
+function newCompany(){
+    _persistCompany(state.extractedData); // save current before clearing
+    state.extractedData={};
+    state.selectedLienholder='';
+    updateFieldForm();
+}
+function loadCompany(i){
+    const c=getSavedCompanies()[i];if(!c)return;
+    Object.entries(c).forEach(([k,v])=>{if(k!=='savedAt')state.extractedData[k]=v;});
+    updateFieldForm();showToast(`Loaded "${c.company_name}"`);
+}
+function deleteCompany(i){const a=getSavedCompanies();a.splice(i,1);localStorage.setItem('qf_companies',JSON.stringify(a));renderCompanies();}
+function renderCompanies(q=''){
+    const el=document.getElementById('company-list');
+    const all=getSavedCompanies();
+    if(!all.length){el.innerHTML='<p class="text-sm text-zinc-500 text-center py-3">None yet.</p>';return;}
+    const term=(q||document.getElementById('company-search')?.value||'').toLowerCase().trim();
+    const filtered=term?all.map((co,i)=>({co,i})).filter(({co})=>(co.company_name||'').toLowerCase().includes(term)):all.map((co,i)=>({co,i}));
+    if(!filtered.length){el.innerHTML='<p class="text-sm text-zinc-500 text-center py-3">No matches.</p>';return;}
+    el.innerHTML=filtered.map(({co,i})=>`<div class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800 transition-colors group cursor-pointer" onclick="loadCompany(${i})">
+        <i class="fa-solid fa-building text-zinc-600 text-xs shrink-0"></i>
+        <span class="text-sm text-zinc-300 truncate flex-1">${esc(co.company_name)}</span>
+        <button onclick="event.stopPropagation();deleteCompany(${i})" class="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0"><i class="fa-solid fa-xmark text-xs"></i></button>
+    </div>`).join('');
+}
+
+/* ═══ CUSTOM FIELDS ═══ */
+/* ═══ FIELD MANAGER ═══ */
+const GROUP_DOT = {
+    'Dates':'bg-amber-500','Company':'bg-blue-500','Client':'bg-emerald-500',
+    'Machine':'bg-violet-500','Sale Info':'bg-orange-500','Bill of Sale':'bg-red-500',
+    'Coverage / Warranty':'bg-cyan-500','Lienholder':'bg-pink-500','Custom':'bg-zinc-500'
+};
+let _fmEditKey=null; // which field is currently in edit mode
+
+function renderFieldManager(q=''){
+    const term=(q||document.getElementById('field-search')?.value||'').toLowerCase().trim();
+    const cfg=loadFieldConfig();
+    const el=document.getElementById('field-manager-list');
+    let html='';
+    let lastGroup='';
+    cfg.forEach(g=>{
+        g.fields.forEach(f=>{
+            if(term&&!f.label.toLowerCase().includes(term)&&!f.key.toLowerCase().includes(term)) return;
+            const dot=GROUP_DOT[g.name]||'bg-zinc-500';
+            if(g.name!==lastGroup){
+                html+=`<div class="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider px-1 pt-2 pb-0.5">${g.name}</div>`;
+                lastGroup=g.name;
+            }
+            if(_fmEditKey===f.key){
+                html+=`<div class="px-2 py-2 rounded-lg bg-zinc-800 border border-zinc-700 mb-1 space-y-1.5">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="w-2 h-2 rounded-full shrink-0 ${dot}"></span>
+                        <span class="text-[10px] text-zinc-500 font-mono">${esc(f.key)}</span>
+                    </div>
+                    <input id="fme-label" type="text" value="${esc(f.label)}" placeholder="Label" class="!text-xs !py-1 w-full">
+                    <input id="fme-pinned" type="text" value="${esc(f.pinned||'')}" placeholder="Always fill as… (leave blank for none)" class="!text-xs !py-1 w-full">
+                    <div class="flex gap-2 mt-1">
+                        <button onclick="saveFieldEdit('${f.key}')" class="flex-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white py-1 rounded transition-colors">Save</button>
+                        <button onclick="_fmEditKey=null;renderFieldManager()" class="flex-1 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-300 py-1 rounded transition-colors">Cancel</button>
+                    </div>
+                </div>`;
+            } else {
+                const isHidden=!!f.hidden;
+                html+=`<div class="flex items-center gap-2 px-2 py-1.5 rounded-lg ${isHidden?'opacity-40':''} hover:bg-zinc-800 group transition-colors">
+                    <span class="w-2 h-2 rounded-full shrink-0 ${dot}"></span>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-xs text-zinc-300 truncate">${esc(f.label)}</div>
+                        <div class="text-[10px] text-zinc-600 font-mono truncate">${esc(f.key)}${f.pinned?` · <span class="text-amber-600">pinned: ${esc(f.pinned)}</span>`:''}${f.computed?' · <span class="text-zinc-600">auto</span>':''}${f.checkbox?' · <span class="text-cyan-700">checkbox</span>':''}</div>
+                    </div>
+                    <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button onclick="_fmEditKey='${f.key}';renderFieldManager()" title="Edit" class="text-zinc-500 hover:text-white p-0.5"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                        ${isHidden
+                            ? `<button onclick="restoreField('${f.key}')" title="Restore" class="text-zinc-500 hover:text-emerald-400 p-0.5"><i class="fa-solid fa-eye text-[10px]"></i></button>`
+                            : `<button onclick="hideField('${f.key}')" title="Remove from form" class="text-zinc-500 hover:text-red-400 p-0.5"><i class="fa-solid fa-eye-slash text-[10px]"></i></button>`}
+                        ${f.custom?`<button onclick="deleteField('${f.key}')" title="Delete permanently" class="text-zinc-500 hover:text-red-400 p-0.5"><i class="fa-solid fa-trash-can text-[10px]"></i></button>`:''}
+                    </div>
+                </div>`;
+            }
+        });
+    });
+    if(!html) html='<p class="text-xs text-zinc-500 text-center py-3">No fields match.</p>';
+    el.innerHTML=html;
+}
+
+function saveFieldEdit(key){
+    const newLabel=document.getElementById('fme-label')?.value.trim();
+    const newPinned=document.getElementById('fme-pinned')?.value;
+    if(!newLabel){showToast('Label cannot be empty','error');return;}
+    const cfg=loadFieldConfig();
+    cfg.forEach(g=>g.fields.forEach(f=>{
+        if(f.key===key){f.label=newLabel;f.pinned=newPinned||'';}
+    }));
+    saveFieldConfig(cfg);
+    _fmEditKey=null;
+    renderFieldManager();
+    updateFieldForm();
+    showToast('Field updated');
+}
+
+function hideField(key){
+    const cfg=loadFieldConfig();
+    cfg.forEach(g=>g.fields.forEach(f=>{if(f.key===key) f.hidden=true;}));
+    saveFieldConfig(cfg);
+    renderFieldManager();
+    updateFieldForm();
+}
+
+function restoreField(key){
+    const cfg=loadFieldConfig();
+    cfg.forEach(g=>g.fields.forEach(f=>{if(f.key===key) f.hidden=false;}));
+    saveFieldConfig(cfg);
+    renderFieldManager();
+    updateFieldForm();
+}
+
+function deleteField(key){
+    const cfg=loadFieldConfig();
+    cfg.forEach(g=>{g.fields=g.fields.filter(f=>f.key!==key);});
+    saveFieldConfig(cfg);
+    renderFieldManager();
+    updateFieldForm();
+}
+
+function openAddField(){
+    const form=document.getElementById('add-field-form');
+    form.classList.remove('hidden');
+    const sel=document.getElementById('af-group');
+    sel.innerHTML=FIELD_GROUPS.map(g=>`<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('')
+        +'<option value="Custom">Custom</option>';
+    document.getElementById('af-label').value='';
+    document.getElementById('af-key').value='';
+    document.getElementById('af-pinned').value='';
+    // Auto-generate key from label
+    document.getElementById('af-label').oninput=function(){
+        const auto=this.value.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+        document.getElementById('af-key').value=auto;
+    };
+}
+
+function closeAddField(){
+    document.getElementById('add-field-form').classList.add('hidden');
+}
+
+function confirmAddField(){
+    const label=document.getElementById('af-label').value.trim();
+    const key=document.getElementById('af-key').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+    const group=document.getElementById('af-group').value;
+    const pinned=document.getElementById('af-pinned').value.trim();
+    if(!label||!key){showToast('Label and key are required','error');return;}
+    const cfg=loadFieldConfig();
+    const allKeys=cfg.flatMap(g=>g.fields.map(f=>f.key));
+    if(allKeys.includes(key)){showToast(`Key "${key}" already exists`,'error');return;}
+    const newField={key,label,pinned,custom:true};
+    const grp=cfg.find(g=>g.name===group);
+    if(grp){grp.fields.push(newField);}
+    else{cfg.push({name:'Custom',icon:'fa-puzzle-piece',fields:[newField]});}
+    saveFieldConfig(cfg);
+    closeAddField();
+    renderFieldManager();
+    updateFieldForm();
+    showToast(`Field "${label}" added`);
+}
+
+/* ═══════════════════════════════════════════════
+   PDF FIELD MAPPER (visual, draggable, WYSIWYG)
+   ═══════════════════════════════════════════════ */
+const mapper = { name:null, pdfDoc:null, page:1, total:0, scale:1.5, pageH:0, pageW:0, mappings:[], pageImageData:null };
+let dragState = null;
+
+async function openMapper(name){
+    const tmpl=state.templates.find(t=>t.name===name);
+    if(!tmpl){showToast('Template not found','error');return;}
+    mapper.name=name;
+    mapper.mappings=[...getMappings(name)];
+    document.getElementById('mapper-title').textContent=`Map Fields: ${name}`;
+    populateFieldSelect();
+    try{
+        mapper.pdfDoc=await pdfjsLib.getDocument({data:tmpl.bytes.slice()}).promise;
+        mapper.total=mapper.pdfDoc.numPages;
+        mapper.page=1;
+        document.getElementById('mapper-page-total').textContent=mapper.total;
+        await renderMapperPage();
+        document.getElementById('mapper-modal').classList.remove('hidden');
+    }catch(err){console.error(err);showToast('Could not render PDF: '+err.message,'error');}
+}
+
+function closeMapper(){
+    document.getElementById('mapper-modal').classList.add('hidden');
+    saveMappingsFor(mapper.name,mapper.mappings);
+    renderTemplates();
+    showToast(`${mapper.mappings.length} field(s) mapped for ${mapper.name}`);
+}
+
+function populateFieldSelect(){
+    const sel=document.getElementById('mapper-field-select');
+    sel.innerHTML=`<option value="">-- select a field --</option>`+
+        ALL_KEYS.map(k=>`<option value="${k}">${KEY_LABELS[k]||k} (${k})</option>`).join('');
+}
+
+async function renderMapperPage(){
+    document.getElementById('mapper-page-num').textContent=mapper.page;
+    const page=await mapper.pdfDoc.getPage(mapper.page);
+    const vp=page.getViewport({scale:mapper.scale});
+    mapper.pageH=vp.height/mapper.scale;
+    mapper.pageW=vp.width/mapper.scale;
+    const canvas=document.getElementById('mapper-canvas');
+    canvas.width=vp.width; canvas.height=vp.height;
+    const ctx=canvas.getContext('2d');
+    await page.render({canvasContext:ctx,viewport:vp}).promise;
+    mapper.pageImageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    drawTextOverlays();
+    renderMapperMarkers();
+}
+
+function drawTextOverlays(){
+    const canvas=document.getElementById('mapper-canvas');
+    const ctx=canvas.getContext('2d');
+    if(mapper.pageImageData) ctx.putImageData(mapper.pageImageData,0,0);
+    const pageMarkers=mapper.mappings.filter(m=>m.page===mapper.page);
+    for(const m of pageMarkers){
+        const fs=(m.fontSize||11)*mapper.scale;
+        const cx=m.pdfX*mapper.scale;
+        const cy=(mapper.pageH-m.pdfY)*mapper.scale;
+        ctx.font=`${fs}px Helvetica, Arial, sans-serif`;
+        ctx.fillStyle='rgba(99,102,241,0.85)';
+        const displayText=KEY_LABELS[m.fieldKey]||m.fieldKey;
+        ctx.fillText(displayText,cx,cy);
+        const tw=ctx.measureText(displayText).width;
+        ctx.strokeStyle='rgba(99,102,241,0.4)';
+        ctx.lineWidth=1;
+        ctx.setLineDash([3,3]);
+        ctx.strokeRect(cx-2,cy-fs+2,tw+4,fs+2);
+        ctx.setLineDash([]);
+    }
+}
+
+function mapperPrevPage(){if(mapper.page>1){mapper.page--;renderMapperPage();}}
+function mapperNextPage(){if(mapper.page<mapper.total){mapper.page++;renderMapperPage();}}
+
+function canvasToMapping(ev){
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
+    const canvasX=(ev.clientX-rect.left)*scaleX, canvasY=(ev.clientY-rect.top)*scaleY;
+    return {
+        pdfX:Math.round((canvasX/mapper.scale)*100)/100,
+        pdfY:Math.round((mapper.pageH-(canvasY/mapper.scale))*100)/100
+    };
+}
+
+document.getElementById('mapper-canvas').addEventListener('mousedown',ev=>{
+    if(dragState)return;
+    const fieldKey=document.getElementById('mapper-field-select').value;
+    if(!fieldKey){showToast('Select a field from the dropdown first','error');return;}
+    const {pdfX,pdfY}=canvasToMapping(ev);
+    const fs=parseInt(localStorage.getItem('qf_fontsize'))||11;
+    const newIdx=mapper.mappings.length;
+    mapper.mappings.push({fieldKey,page:mapper.page,pdfX,pdfY,fontSize:fs});
+    drawTextOverlays();
+    renderMapperMarkers();
+});
+
+function removeMapping(idx,ev){
+    if(ev){ev.stopPropagation();ev.preventDefault();}
+    mapper.mappings.splice(idx,1);
+    drawTextOverlays();
+    renderMapperMarkers();
+}
+
+function pdfToMarkerPos(m){
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const cssX=m.pdfX*mapper.scale/canvas.width*rect.width;
+    const cssY=(mapper.pageH-m.pdfY)*mapper.scale/canvas.height*rect.height;
+    return {cssX,cssY};
+}
+
+function mouseToPdf(ev){
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const cssX=ev.clientX-rect.left;
+    const cssY=ev.clientY-rect.top;
+    const pdfX=cssX/rect.width*canvas.width/mapper.scale;
+    const pdfY=mapper.pageH-(cssY/rect.height*canvas.height/mapper.scale);
+    return {pdfX:Math.round(pdfX*100)/100,pdfY:Math.round(pdfY*100)/100};
+}
+
+function startDrag(idx,ev){
+    ev.preventDefault();
+    ev.stopPropagation();
+    const m=mapper.mappings[idx];
+    if(!m||m.page!==mapper.page)return;
+    const {cssX,cssY}=pdfToMarkerPos(m);
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const grabOffsetX=(ev.clientX-rect.left)-cssX;
+    const grabOffsetY=(ev.clientY-rect.top)-cssY;
+    dragState={idx,el:ev.currentTarget,grabOffsetX,grabOffsetY};
+    ev.currentTarget.classList.add('dragging');
+}
+
+document.addEventListener('mousemove',ev=>{
+    if(!dragState)return;
+    ev.preventDefault();
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const cssX=(ev.clientX-rect.left)-dragState.grabOffsetX;
+    const cssY=(ev.clientY-rect.top)-dragState.grabOffsetY;
+    const pdfX=cssX/rect.width*canvas.width/mapper.scale;
+    const pdfY=mapper.pageH-(cssY/rect.height*canvas.height/mapper.scale);
+    const m=mapper.mappings[dragState.idx];
+    m.pdfX=Math.round(pdfX*100)/100;
+    m.pdfY=Math.round(pdfY*100)/100;
+    dragState.el.style.left=cssX+'px';
+    dragState.el.style.top=cssY+'px';
+    drawTextOverlays();
+});
+
+document.addEventListener('mouseup',()=>{
+    if(!dragState)return;
+    dragState.el.classList.remove('dragging');
+    dragState=null;
+    renderMapperMarkers();
+});
+
+function renderMapperMarkers(){
+    const canvas=document.getElementById('mapper-canvas');
+    const rect=canvas.getBoundingClientRect();
+    const wrap=document.getElementById('mapper-markers');
+    const pageMarkers=mapper.mappings.map((m,i)=>({...m,idx:i})).filter(m=>m.page===mapper.page);
+
+    wrap.innerHTML=pageMarkers.map(m=>{
+        const cssX=m.pdfX*mapper.scale/canvas.width*rect.width;
+        const cssY=(mapper.pageH-m.pdfY)*mapper.scale/canvas.height*rect.height;
+        return `<div class="mapper-marker" style="left:${cssX}px;top:${cssY}px"
+                     onmousedown="startDrag(${m.idx},event)" title="Drag to move">
+            <div class="handle"></div>
+            <div class="tag">
+                <div class="label">${KEY_LABELS[m.fieldKey]||m.fieldKey}</div>
+                <div class="delete-btn" onmousedown="removeMapping(${m.idx},event)"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+        </div>`;
+    }).join('');
+
+    document.getElementById('mapper-count').textContent=`${mapper.mappings.length} field(s) mapped`;
+}
+
+/* ═══ PDF FILLING ═══ */
+async function fillPdfCoords(templateBytes, data, mappings){
+    const pdfDoc=await PDFLib.PDFDocument.load(templateBytes,{ignoreEncryption:true});
+    const font=await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+    let filled=0;
+    for(const m of mappings){
+        const val=data[m.fieldKey];
+        if(!val)continue;
+        const page=pdfDoc.getPage(m.page-1);
+        page.drawText(String(val),{x:m.pdfX,y:m.pdfY,size:m.fontSize||11,font});
+        filled++;
+    }
+    return {bytes:await pdfDoc.save(),filled};
+}
+
+async function fillPdfFormFields(templateBytes, data){
+    const pdfDoc=await PDFLib.PDFDocument.load(templateBytes,{ignoreEncryption:true});
+    let filled=0;
+    try{
+        const form=pdfDoc.getForm();
+        for(const field of form.getFields()){
+            const name=field.getName(),val=data[name];
+            if(!val)continue;
+            try{
+                if(field.constructor.name==='PDFTextField'){field.setText(String(val));filled++;}
+                else if(field.constructor.name==='PDFDropdown'){field.select(String(val));filled++;}
+            }catch{}
+        }
+    }catch{}
+    return {bytes:await pdfDoc.save(),filled};
+}
+
+/* ═══ SUMMARY PDF ═══ */
+async function createQuotePdf(data){
+    const doc=await PDFLib.PDFDocument.create();
+    const pg=doc.addPage([612,792]);
+    const font=await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold=await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const gray=PDFLib.rgb(.45,.45,.45),black=PDFLib.rgb(0,0,0);
+    const mx=50;let y=720;
+    const draw=(t,o={})=>{if(!t)return;pg.drawText(String(t),{x:o.x||mx,y,size:o.s||11,font:o.f||font,color:o.c||black});y-=(o.sp||16);};
+    const line=()=>{pg.drawLine({start:{x:mx,y},end:{x:562,y},thickness:.5,color:gray});y-=16;};
+
+    draw('DEAL SUMMARY',{s:24,f:bold,sp:28});
+    draw(`Date: ${data.date||''}`,{c:gray,s:10});
+    draw(`Rep: ${data.rep_full_name||''}`,{c:gray,s:10,sp:24});
+    line();
+
+    draw('CUSTOMER',{f:bold,s:12,sp:18});
+    draw(data.company_name,{f:bold});
+    draw(data.company_billing_street,{});
+    draw(data.company_billing_city_state,{});
+    if(data.company_delivery_street){y-=4;draw('Delivery:',{s:9,c:gray});draw(data.company_delivery_street,{});draw(data.company_delivery_city_state,{});}
+    y-=6;
+    draw(data.client_full_name?`Attn: ${data.client_full_name}`:null,{});
+    draw(data.client_title?`Title: ${data.client_title}`:null,{s:10,c:gray});
+    draw(data.client_email?`Email: ${data.client_email}`:null,{s:10,c:gray});
+    draw(data.client_phone?`Phone: ${data.client_phone}`:null,{s:10,c:gray,sp:20});
+    line();
+
+    draw('EQUIPMENT',{f:bold,s:12,sp:18});
+    const desc=[data.machine_model,data.machine_year?`(${data.machine_year})`:''].filter(Boolean).join(' ')||'Equipment';
+    draw(desc,{f:bold});
+    if(data.vin)draw(`VIN: ${data.vin}`,{s:10,c:gray});
+    if(data.hours_bales)draw(`Hours/Bales: ${data.hours_bales}`,{s:10,c:gray});
+    if(data.market_segment)draw(`Segment: ${data.market_segment}`,{s:10,c:gray});
+    if(data.sale_type)draw(`Sale Type: ${data.sale_type}`,{s:10,c:gray,sp:20});
+    line();
+
+    if(data.lienholder_name){
+        draw('LIENHOLDER',{f:bold,s:12,sp:18});
+        draw(data.lienholder_name,{});
+        draw(data.lienholder_address,{});
+        const lc=[data.lienholder_city,data.lienholder_state,data.lienholder_zip].filter(Boolean).join(', ');
+        draw(lc||null,{});
+        if(data.lienholder_phone)draw(`Phone: ${data.lienholder_phone}`,{s:10,c:gray});
+    }
+
+    pg.drawText('Generated by Quote & Doc Filler',{x:mx,y:50,size:8,font,color:gray});
+    return doc.save();
+}
+
+/* ═══ GENERATE ═══ */
+async function generateDocuments(){
+    const checked=[...document.querySelectorAll('.template-cb:checked')].map(cb=>cb.dataset.name);
+    if(!checked.length){showToast('Select at least one template','error');return;}
+    const data=collectFormData();
+    const btn=document.getElementById('generate-btn');
+    const prog=document.getElementById('progress-container');
+    const bar=document.getElementById('progress-bar');
+    const pt=document.getElementById('progress-text');
+    btn.disabled=true;prog.classList.remove('hidden');bar.style.width='0%';
+    try{
+        const merged=await PDFLib.PDFDocument.create();
+        const total=checked.length+1;let done=0;
+        for(const name of checked){
+            pt.textContent=`Filling ${name}...`;
+            const tmpl=state.templates.find(t=>t.name===name);if(!tmpl)continue;
+            let {bytes}=await fillPdfFormFields(tmpl.bytes,data);
+            const mappings=getMappings(name);
+            if(mappings.length){const r=await fillPdfCoords(bytes,data,mappings);bytes=r.bytes;}
+            const src=await PDFLib.PDFDocument.load(bytes,{ignoreEncryption:true});
+            const pages=await merged.copyPages(src,src.getPageIndices());
+            pages.forEach(p=>merged.addPage(p));
+            done++;bar.style.width=`${Math.round(done/total*100)}%`;
+        }
+        pt.textContent='Adding summary page...';
+        const summaryBytes=await createQuotePdf(data);
+        const summaryDoc=await PDFLib.PDFDocument.load(summaryBytes);
+        const summaryPages=await merged.copyPages(summaryDoc,summaryDoc.getPageIndices());
+        summaryPages.forEach(p=>merged.addPage(p));
+        bar.style.width='100%';pt.textContent='Saving PDF...';
+        const finalBytes=await merged.save();
+        const blob=new Blob([finalBytes],{type:'application/pdf'});
+        const safe=(data.company_name||'Docs').replace(/[^a-zA-Z0-9]/g,'-').substring(0,30);
+        downloadBlob(blob,`${safe}-${new Date().toISOString().slice(0,10)}.pdf`);
+        showToast('Done! Check your downloads.');
+    }catch(err){console.error(err);showToast(err.message||'Failed','error');}
+    finally{btn.disabled=false;setTimeout(()=>prog.classList.add('hidden'),2000);}
+}
+function downloadBlob(b,n){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},100);}
+
+/* ═══ UI ═══ */
+function showToast(msg,type='success'){
+    const t=document.getElementById('toast'),i=document.getElementById('toast-inner');
+    i.textContent=msg;
+    i.className=`px-5 py-3 rounded-lg shadow-2xl text-sm font-medium ${type==='success'?'bg-emerald-600 text-white':type==='error'?'bg-red-600 text-white':'bg-zinc-700 text-white'}`;
+    t.classList.remove('translate-y-20','opacity-0','pointer-events-none');
+    clearTimeout(t._tm);t._tm=setTimeout(()=>t.classList.add('translate-y-20','opacity-0','pointer-events-none'),3500);
+}
+function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'):''}
+
+/* ═══ TEMPLATE CHECKBOX LISTENER ═══ */
+document.getElementById('template-list').addEventListener('change',ev=>{
+    if(ev.target.classList.contains('template-cb')) updateFieldForm();
+});
+
+/* ═══ PIN AUTH ═══ */
+const APP_PIN_HASH='qf_pin_ok';
+function unlockApp(){
+    const pin=document.getElementById('pin-input').value.trim();
+    if(!pin){return;}
+    const stored=localStorage.getItem('qf_access_pin');
+    if(stored && pin===stored){
+        document.getElementById('pin-lock').classList.add('hidden');
+        init();
+    } else if(!stored){
+        localStorage.setItem('qf_access_pin',pin);
+        document.getElementById('pin-lock').classList.add('hidden');
+        init();
+    } else {
+        document.getElementById('pin-error').classList.remove('hidden');
+        document.getElementById('pin-input').value='';
+        setTimeout(()=>document.getElementById('pin-error').classList.add('hidden'),2000);
+    }
+}
+if(localStorage.getItem('qf_access_pin')){
+    document.getElementById('pin-input').focus();
+} else {
+    document.getElementById('pin-error').classList.add('hidden');
+    const label=document.querySelector('#pin-lock p.text-xs.text-zinc-500');
+    if(label) label.textContent='Choose a PIN (first time setup)';
+}
+
+/* ═══ INIT ═══ */
+async function init(){
+    loadSettings();
+    await refreshTemplates();
+    renderCompanies();
+    renderFieldManager();
+    updateFieldForm();
+    const handle=await settingsGet('backup_file_handle');
+    if(handle) updateAutoBackupStatus(handle.name);
+}
+
+// Save to backup file when tab is hidden or page is closing
+document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden') scheduleFileAutoSave();
+});
+window.addEventListener('pagehide',()=>scheduleFileAutoSave());
+</script>
+</body>
+</html>
