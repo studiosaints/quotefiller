@@ -107,8 +107,7 @@
             <div>
                 <label class="text-xs font-medium text-zinc-400 mb-1 block">Model</label>
                 <select id="model-select" onchange="saveSettings()">
-                    <option value="gemini-3.1-pro-preview" selected>gemini-3.1-pro-preview (3.1 Pro)</option>
-                    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest (cheapest)</option>
+                    <option value="gemini-flash-lite-latest" selected>gemini-flash-lite-latest (cheapest)</option>
                     <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
                     <option value="gemini-2.0-flash">gemini-2.0-flash</option>
                 </select>
@@ -498,11 +497,7 @@ async function dbDelete(name){
 /* ═══ SETTINGS ═══ */
 function loadSettings(){
     document.getElementById('api-key-input').value=localStorage.getItem('qf_apikey')||'';
-    const sel=document.getElementById('model-select');
-    const stored=localStorage.getItem('qf_model');
-    const valid=[...sel.options].map(o=>o.value);
-    sel.value=stored&&valid.includes(stored)?stored:'gemini-3.1-pro-preview';
-    localStorage.setItem('qf_model',sel.value);
+    document.getElementById('model-select').value=localStorage.getItem('qf_model')||'gemini-flash-lite-latest';
     document.getElementById('fontsize-input').value=localStorage.getItem('qf_fontsize')||'11';
 }
 function saveSettings(){
@@ -626,7 +621,7 @@ async function extractData(){
     const apiKey=localStorage.getItem('qf_apikey');
     if(!apiKey){showToast('Set your Gemini API key in Settings first','error');toggleSettings();return;}
     if(!state.screenshots.length){showToast('Add at least one screenshot','error');return;}
-    const model=localStorage.getItem('qf_model')||'gemini-3.1-pro-preview';
+    const model=localStorage.getItem('qf_model')||'gemini-flash-lite-latest';
     const btn=document.getElementById('extract-btn');
     btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Extracting...';
     try{
