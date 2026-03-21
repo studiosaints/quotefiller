@@ -498,7 +498,11 @@ async function dbDelete(name){
 /* ═══ SETTINGS ═══ */
 function loadSettings(){
     document.getElementById('api-key-input').value=localStorage.getItem('qf_apikey')||'';
-    document.getElementById('model-select').value=localStorage.getItem('qf_model')||'gemini-3.1-pro-preview';
+    const sel=document.getElementById('model-select');
+    const stored=localStorage.getItem('qf_model');
+    const valid=[...sel.options].map(o=>o.value);
+    sel.value=stored&&valid.includes(stored)?stored:'gemini-3.1-pro-preview';
+    localStorage.setItem('qf_model',sel.value);
     document.getElementById('fontsize-input').value=localStorage.getItem('qf_fontsize')||'11';
 }
 function saveSettings(){
