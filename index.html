@@ -495,10 +495,8 @@ async function dbDelete(name){
 }
 
 /* ═══ SETTINGS ═══ */
-const GEMINI_KEY='AIzaSyDV75oGeKWtf5T2ti_w6BRXiVccz_GZKr0';
 function loadSettings(){
-    document.getElementById('api-key-input').value=localStorage.getItem('qf_apikey')||GEMINI_KEY;
-    if(!localStorage.getItem('qf_apikey'))localStorage.setItem('qf_apikey',GEMINI_KEY);
+    document.getElementById('api-key-input').value=localStorage.getItem('qf_apikey')||'';
     document.getElementById('model-select').value=localStorage.getItem('qf_model')||'gemini-flash-lite-latest';
     document.getElementById('fontsize-input').value=localStorage.getItem('qf_fontsize')||'11';
 }
